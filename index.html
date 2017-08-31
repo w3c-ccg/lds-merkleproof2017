@@ -38,8 +38,8 @@
         // editors, add as many as you like
         // only "name" is required
         editors:  [
-          { name: "Kim D. Hamilton", url: "",
-            company: "", companyURL: "" }
+          { name: "Kim Hamilton Duffy", url: "",
+            company: "Learning Machine", companyURL: "http://www.learningmachine.com/" }
         ],
 
         // authors, add as many as you like.
@@ -47,8 +47,8 @@
         // only "name" is required. Same format as editors.
 
         authors:  [
-          { name: "Kim D. Hamilton", url: "",
-            company: "", companyURL: "" }
+          { name: "Kim Hamilton Duffy", url: "",
+            company: "Learning Machine", companyURL: "http://www.learningmachine.com/" }
         ],
 
         // extend the bibliography entries
@@ -106,6 +106,13 @@
             title:    "Linked Data Signatures 1.0",
             href:     "https://web-payments.org/specs/source/ld-signatures/",
             authors:  ["David Longley", "Manu Sporny"],
+            status:   "CGDRAFT",
+            publisher:  "Web Payments Community Group"
+          },
+          "LDS-KOBLITZ2016": {
+            title:    "Koblitz Elliptic Curve Signature 2016",
+            href:     "https://w3c-dvcg.github.io/lds-koblitz2016/",
+            authors:  ["Harlan Wood", "Manu Sporny"],
             status:   "CGDRAFT",
             publisher:  "Web Payments Community Group"
           }
@@ -210,8 +217,8 @@ the following algorithms:
           </tr>
           <tr>
             <td>signatureAlgorithm</td>
-            <td>https://registry.ietf.org/ietf-jose-jws-algorithms#RS256</td>
-            <td>[[RFC7515]]</td>
+            <td>https://w3c-dvcg.github.io/lds-koblitz2016/</td>
+            <td>[[LDS-KOBLITZ2016]]</td>
           </tr>
         </tbody>
 
@@ -221,10 +228,8 @@ the following algorithms:
       <h2>Modification to Algorithms</h2>
 
       <p>
-This signature suite uses a constrained profile of JSON Web Signatures
-which is specified in [[RFC7797]]. The signature algorithm used is
-the JSON Web Signature implementation of the RSASSA-PKCS1-v1_5 algorithm.
-The steps to construct and verify the digital signature are defined below.
+This signature suite uses the [[LDS-KOBLITZ2016]]. The signature algorithm uses
+the Koblitz Elliptic Curve, also known as secp256k1, used by Bitcoin and Ethereum.
       <p>
 
       <section>
@@ -232,26 +237,48 @@ The steps to construct and verify the digital signature are defined below.
 
         <p>
 The <var>digital signature algorithm</var> defined in Section 7.1:
-Signature Algorithm takes <var>tbs</var>, a <var>privateKey</var>,
+Signature Algorithm takes an array of <var>tbs</var>, a <var>privateKey</var>,
 and </var><var>options</var> as inputs and produces a
 <var>signatureValue</var> as output.
         </p>
         <ol class="algorithm">
           <li>
-Take <var>tbs</var>, which is the data to be signed, as input and generate
-a JOSE Web Signature structure where the headers are:
-<code>{"alg":"HS256","b64":false,"crit":["b64"]}</code> and the
-payload is a URL-safe Base64 encoding of <var>tbs</var>.
+Take an array of <var>tbs</var>, which is an array of the data to be signed, as input and generate
+a Merkle Tree.
           </li>
           <li>
-Perform the
-<a href="https://datatracker.ietf.org/doc/html/rfc7518#section-3.3">RS256</a>
-JSON Web Signature digital signature algorithm specified in Section 5.1 of
-[[RFC7518]] and return the result as <em>signatureValue</em>.
+Include the root of the Merkle Tree ("Merkle Root") in the data field of the Blockchain transaction. For Bitcoin this is the OP_RETURN field.
+          </li>
+          <li>
+Sign the transaction with encoding of <var>privateKey</var> appropriate for the blockchain. For Bitcoin this is
+a WIF encoding. Per the signature suite definition, this is using [[LDS-KOBLITZ2016]].
+          </li>
+          <li>
+For each <var>tbs</var>, create the signature element, which includes:
+            <ul>
+              <li>
+The hash of the element as <em>targetHash</em>
+              </li>
+              <li>
+The merkle root as <em>merkleRoot</em>
+              </li>
+              <li>
+The Merkle Proof for <var>tbs</var>, which is the path from <em>targetHash</em> to <em>merkleRoot</em> in the
+Merkle Tree, as <em>proof</em>. The should not include the endpoints of the path (<em>targetHash</em> and
+<em>merkleRoot</em>)
+              </li>
+              <li>
+The blockchain anchor(s) as <em>anchors</em>. This describes how to look up the blockchain transaction. Its fields
+include the type of blockchain transaction as <em>type</em> and the transaction id as <em>sourceId</em>.
+              </li>
+            </ul>
+          <li>
+Return the result as <em>signatureValue</em>.
           </li>
         </ol>
-
       </section>
+
+        <div class="issue">List all blockchain <em>type</em> values. Note that we should call out testnet explicitly</div>
 
     <section>
         <h3>Modifications to Signature Verification Algorithm</h3>
@@ -259,20 +286,26 @@ JSON Web Signature digital signature algorithm specified in Section 5.1 of
         <p>
 The <var>digital signature algorithm</var> defined in Section 7.2:
 Signature Verification Algorithm takes the value to be verified,
-<em>tbv</em>, the <em>public key</em> to the signature algorithm
+a <em>tbv</em>, the <em>public key</em> to the signature algorithm
 and returns a boolean value.
         </p>
         <ol class="algorithm">
           <li>
-Take <var>tbv</var> and perform the
-<a href="https://datatracker.ietf.org/doc/html/rfc7518#section-3.3">RS256</a>
-JSON Web Signature digital signature verification algorithm specified in
-Section 5.2 of [[RFC7518]]. If the result is a valid signature, return
-<code>true</code>, otherwise return <code>false</code>.
+Validate the values <em>targetHash</em>, <em>proof</em>, and <em>merkleRoot</em> form a valid Merkle Path.
+          </li>
+          <li>
+Verify that <em>targetHash</em> matches the JSON-LD canonicalized, SHA256 Hash of <var>tbv</var>.
+          </li>
+          <li>
+Verify <em>merkleRoot</em> matches what is stored in the transaction at <em>sourceId</em> on blockchain <em>type</em>.
+          </li>
+          <li>
+If all of the above checks pass, return <code>true</code>, otherwise return <code>false</code>.
           </li>
         </ol>
-
-      </section>
+        <div class="issue">Add references and more pointers to merkle tree operations.</div>
+        <div class="issue">Should we use tx ref encoding instead of txids?</div>
+    </section>
 
     </section>
 
@@ -297,17 +330,25 @@ A simple example of an RSA 2017 signature:
       </p>
 
       <pre class="example highlight">
-{
-  "@context": ["http://schema.org/", "https://w3id.org/security/v1"],
-  "description": "Hello world!",
+
   "signature": {
-    "type": "RsaSignature2017",
-    "created": "2017-10-24T05:33:31Z",
-    "creator": "https://example.com/jdoe/keys/1",
-    "domain": "example.com",
-    "signatureValue": "eyiOiJJ0eXAK...EjXkgFWFO"
+    "@context": ["http://schema.org/", "https://w3id.org/security/v1"],
+    "type": "MerkleProof2017",
+    "targetHash": "637ec732fa4b7b56f4c15a6a12680519a17a9e9eade09f5b424a48eb0e6f5ad0",
+    "merkleRoot": "f029b45bb1a7b1f0b970f6de35344b73cccd16177b4c037acbc2541c7fc27078",
+    "anchors": [
+      {
+        "sourceId": "d75b7a5bdb3d5244b753e6b84e987267cfa4ffa7a532a2ed49ad3848be1d82f8",
+        "type": "BTCOpReturn"
+      }
+    ],
+    "proof": [
+      {
+        "right": "11174e220fe74de907d1107e2a357e41434123f2948fc6b946fbfd7e3e3eecd1"
+      }
+    ]
   }
-}
+
       </pre>
     </section>
 
